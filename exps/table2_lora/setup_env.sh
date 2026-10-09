@@ -16,12 +16,20 @@ export UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR:-$REPO/.uv-python}
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv not found, installing it to ~/.local/bin"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    if command -v curl >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
+    else
+        echo "need curl or wget to install uv" >&2; exit 1
+    fi
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+echo "using $(uv --version)"
 uv python install "$PYTHON_VERSION"
-uv venv --clear --python-preference only-managed --python "$PYTHON_VERSION" "$VENV"
+rm -rf "$VENV"  # recreate from scratch (works with any uv version, unlike --clear)
+uv venv --python-preference only-managed --python "$PYTHON_VERSION" "$VENV"
 uv pip install --python "$VENV/bin/python" \
     --index-url "https://download.pytorch.org/whl/$TORCH_CUDA" "torch==2.8.*"
 uv pip install --python "$VENV/bin/python" \
