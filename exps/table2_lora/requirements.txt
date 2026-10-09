@@ -1,0 +1,9 @@
+# Dependencies for the Table 2 LoRA runs on top of this transformers fork (June 2021).
+# Python 3.9 is required: tokenizers 0.10.x only ships wheels up to cp39.
+# torch is installed separately by setup_env.sh so the CUDA build can be chosen.
+numpy<2
+datasets==1.11.0
+pyarrow==12.0.1   # datasets 1.11 uses pa.PyExtensionType, removed in newer pyarrow
+dill==0.3.4
+multiprocess==0.70.12.2
+scikit-learn
