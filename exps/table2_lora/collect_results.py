@@ -1,13 +1,15 @@
 #!/usr/bin/env python
-"""Summarise the Table 2 LoRA runs of one or more sweeps.
+"""Progress and results of the Table 2 LoRA runs of one or more sweeps.
 
-    python exps/table2_lora/collect_results.py checkpoints/table2_lora/sst2.wd0.1
-    python exps/table2_lora/collect_results.py checkpoints/table2_lora/*.wd*
+    python exps/table2_lora/collect_results.py checkpoints/table2_lora/sst2.r16.a32.wd0.1
+    python exps/table2_lora/collect_results.py checkpoints/table2_lora/sst2.*
 
-For every sweep directory (one task, one weight decay, a seed* subdirectory per
-seed) this prints the dev accuracy of each finished seed, the median and the
-mean +- sample std over seeds (the paper reports the median of five runs), the
-training time, and the fraction of parameters LoRA tunes.
+For every sweep directory (one task and setting, a seed* subdirectory per seed)
+this prints, per seed, either the final dev accuracy or, while it is still
+training, the current epoch, the best dev accuracy so far and an estimate of
+the time left. Once seeds have finished it prints the median and the
+mean +- sample std over them (the paper reports the median of five runs) and
+the fraction of parameters LoRA tunes. Safe to run at any time.
 """
 import argparse
 import contextlib
@@ -15,15 +17,32 @@ import glob
 import io
 import json
 import os
+import re
 import statistics
 import sys
+import time
+from datetime import datetime
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# Lines the training log contains, e.g.
+#   [INFO|trainer.py:1185] 2026-10-09 09:40:59,844 >>   Num Epochs = 10
+#   {'loss': 0.31, 'learning_rate': 9.1e-05, 'epoch': 2.38}
+#   {'eval_loss': 0.21, 'eval_accuracy': 0.9381, ..., 'epoch': 3.0}
+TRAIN_START_RE = re.compile(r"\] (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ >>\s+Num Epochs = (\d+)")
+EPOCH_RE = re.compile(r"'epoch': ([0-9.]+)")
+EVAL_ACC_RE = re.compile(r"'eval_accuracy': ([0-9.]+)")
 
 
 def load_json(path):
     with open(path) as fh:
         return json.load(fh)
+
+
+def fmt_duration(seconds):
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f} h"
+    return f"{max(seconds, 0) / 60:.0f} min"
 
 
 def tuned_fraction(run_dir):
@@ -43,22 +62,53 @@ def tuned_fraction(run_dir):
         return None
 
 
-def fmt_time(seconds):
-    return f"{seconds / 3600:.2f} h" if seconds >= 3600 else f"{seconds / 60:.1f} min"
+def expected_seeds(sweep_dir):
+    """Seeds the launcher started (from pids.txt), plus any seed directory that exists."""
+    seeds = set()
+    pids = os.path.join(sweep_dir, "pids.txt")
+    if os.path.exists(pids):
+        for line in open(pids):
+            if "seeds:" in line:
+                seeds.update(line.split("seeds:", 1)[1].split())
+    for run_dir in glob.glob(os.path.join(sweep_dir, "seed*")):
+        seeds.add(run_dir.rsplit("seed", 1)[-1])
+    return sorted(seeds, key=int)
+
+
+def progress(run_dir):
+    """One-line status of a run that has no results yet."""
+    log = os.path.join(run_dir, "log.txt")
+    if not os.path.exists(log):
+        return "queued (waits for a free GPU slot)"
+    with open(log, errors="replace") as fh:
+        text = fh.read()
+    if "Traceback (most recent call last)" in text:
+        return f"FAILED, see {log}"
+    idle = time.time() - os.path.getmtime(log)
+    stale = f", no log output for {fmt_duration(idle)}" if idle > 600 else ""
+    start = TRAIN_START_RE.search(text)
+    epochs = EPOCH_RE.findall(text)
+    if not start or not epochs:
+        return "preparing data and model" + stale
+    num_epochs = int(start.group(2))
+    epoch = float(epochs[-1])
+    accs = [float(a) for a in EVAL_ACC_RE.findall(text)]
+    best = f", best dev acc so far {100 * max(accs):.2f}" if accs else ""
+    elapsed = time.time() - datetime.strptime(start.group(1), "%Y-%m-%d %H:%M:%S").timestamp()
+    eta = f", about {fmt_duration(elapsed * (num_epochs - epoch) / epoch)} left" if epoch > 0.02 else ""
+    return f"training, epoch {epoch:.2f} of {num_epochs}{best}{eta}{stale}"
 
 
 def summarise(sweep_dir, count_params):
     print(f"\n== {sweep_dir}")
     rows = []
-    run_dirs = glob.glob(os.path.join(sweep_dir, "seed*"))
-    for run_dir in sorted(run_dirs, key=lambda d: int(d.rsplit("seed", 1)[-1])):
-        seed = run_dir.rsplit("seed", 1)[-1]
+    for seed in expected_seeds(sweep_dir):
+        run_dir = os.path.join(sweep_dir, f"seed{seed}")
         eval_path = os.path.join(run_dir, "eval_results.json")
         if not os.path.exists(eval_path):
-            print(f"  seed {seed}: not finished (no eval_results.json)")
+            print(f"  seed {seed:>2}: {progress(run_dir)}")
             continue
-        metrics = load_json(eval_path)
-        row = {"seed": seed, "acc": 100 * metrics["eval_accuracy"], "dir": run_dir}
+        row = {"seed": seed, "acc": 100 * load_json(eval_path)["eval_accuracy"], "dir": run_dir}
         mm_path = os.path.join(run_dir, "eval_mm_results.json")
         if os.path.exists(mm_path):
             row["acc_mm"] = 100 * load_json(mm_path)["eval_mm_accuracy"]
@@ -66,29 +116,20 @@ def summarise(sweep_dir, count_params):
         if os.path.exists(train_path):
             row["runtime"] = load_json(train_path).get("train_runtime")
         rows.append(row)
+        mm = f", mismatched {row['acc_mm']:.2f}" if "acc_mm" in row else ""
+        took = f" (trained in {fmt_duration(row['runtime'])})" if row.get("runtime") else ""
+        print(f"  seed {seed:>2}: done, dev accuracy {row['acc']:.2f}{mm}{took}")
 
     if not rows:
         return
-
-    has_mm = any("acc_mm" in r for r in rows)
-    header = f"  {'seed':>4}  {'acc':>6}" + (f"  {'acc-mm':>6}" if has_mm else "") + f"  {'train time':>10}"
-    print(header)
-    for r in rows:
-        line = f"  {r['seed']:>4}  {r['acc']:6.2f}"
-        if has_mm:
-            line += f"  {r.get('acc_mm', float('nan')):6.2f}"
-        line += f"  {fmt_time(r['runtime']) if r.get('runtime') else '':>10}"
-        print(line)
-
-    for key, label in (("acc", "dev accuracy"), ("acc_mm", "dev-mm accuracy")):
+    for key, label in (("acc", "dev accuracy"), ("acc_mm", "dev accuracy, mismatched")):
         vals = [r[key] for r in rows if key in r]
         if not vals:
             continue
         line = f"  {label}: median {statistics.median(vals):.2f}, mean {statistics.mean(vals):.2f}"
         if len(vals) > 1:
             line += f" +- {statistics.stdev(vals):.2f}"
-        print(line + f"  (n={len(vals)})")
-
+        print(line + f"  (over {len(vals)} finished seeds)")
     if count_params:
         counts = tuned_fraction(rows[0]["dir"])
         if counts:
