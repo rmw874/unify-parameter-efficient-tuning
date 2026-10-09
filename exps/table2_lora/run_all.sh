@@ -4,6 +4,7 @@
 #   bash exps/table2_lora/run_all.sh sst2
 #   bash exps/table2_lora/run_all.sh mnli
 #   SEEDS="42 2" WEIGHT_DECAY=0 bash exps/table2_lora/run_all.sh sst2
+#   SEEDS="42 2 4" LORA_ALPHA=16 bash exps/table2_lora/run_all.sh sst2   # ablation, own directory
 #   PER_GPU=5 bash exps/table2_lora/run_all.sh sst2    # one big GPU: all seeds at once
 
 set -euo pipefail
@@ -12,8 +13,7 @@ TASK=${1:?usage: run_all.sh <sst2|mnli>}
 SEEDS=${SEEDS:-"42 2 4 6 8"}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/common.sh"
-RUN_NAME=${RUN_NAME:-${TASK}.wd${WEIGHT_DECAY}}
-export OUT_ROOT CACHE_DIR MODEL WEIGHT_DECAY RUN_NAME PYTHON
+export OUT_ROOT CACHE_DIR MODEL WEIGHT_DECAY LORA_R LORA_ALPHA LORA_DROPOUT RUN_NAME PYTHON
 
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
     IFS=',' read -r -a GPUS <<< "$CUDA_VISIBLE_DEVICES"

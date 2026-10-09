@@ -9,6 +9,7 @@
 # alpha 32, dropout 0.1, which is 0.47% of RoBERTa-base ("LoRA (0.5%)").
 # every setting can be overridden through the environment, e.g.
 #   WEIGHT_DECAY=0 bash exps/table2_lora/run_lora.sh sst2 42
+#   LORA_ALPHA=16 bash exps/table2_lora/run_lora.sh sst2 42       # scaling 1 instead of 2
 #   MAX_STEPS=200 bash exps/table2_lora/run_lora.sh mnli 42      # timing run
 #   RESUME=1 bash exps/table2_lora/run_lora.sh mnli 42           # continue from last checkpoint
 set -euo pipefail
@@ -23,16 +24,12 @@ NUM_EPOCHS=${NUM_EPOCHS:-10}
 WARMUP_RATIO=${WARMUP_RATIO:-0.06}
 MAX_GRAD_NORM=${MAX_GRAD_NORM:-1}
 MAX_SEQ_LENGTH=${MAX_SEQ_LENGTH:-512}
-LORA_R=${LORA_R:-16}
-LORA_ALPHA=${LORA_ALPHA:-32}
-LORA_DROPOUT=${LORA_DROPOUT:-0.1}
 UNFREEZE=${UNFREEZE:-ef_}              # "ef_,classifier" also trains the classification head
 MAX_STEPS=${MAX_STEPS:--1}             # >0 stops after that many steps (timing runs)
 MAX_TRAIN_SAMPLES=${MAX_TRAIN_SAMPLES:-}   # smoke tests only
 MAX_EVAL_SAMPLES=${MAX_EVAL_SAMPLES:-}     # empty = the full dev set
 RESUME=${RESUME:-0}
 EXTRA_ARGS=${EXTRA_ARGS:-}             # appended verbatim to the run_glue.py command line
-RUN_NAME=${RUN_NAME:-${TASK}.wd${WEIGHT_DECAY}}
 SAVE=${SAVE:-$OUT_ROOT/$RUN_NAME/seed$SEED}
 
 extra=()
