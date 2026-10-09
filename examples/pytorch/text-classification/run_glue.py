@@ -542,18 +542,24 @@ def main():
         eval_datasets = [eval_dataset]
         if data_args.task_name == "mnli":
             tasks.append("mnli-mm")
-            eval_datasets.append(datasets["validation_mismatched"])
+            mm_dataset = datasets["validation_mismatched"]
+            if data_args.max_eval_samples is not None:
+                mm_dataset = mm_dataset.select(range(data_args.max_eval_samples))
+            eval_datasets.append(mm_dataset)
 
         for eval_dataset, task in zip(eval_datasets, tasks):
-            metrics = trainer.evaluate(eval_dataset=eval_dataset)
+            # MNLI is evaluated twice (matched, then mismatched). Give the mismatched pass
+            # its own prefix so that it does not overwrite eval_results.json.
+            prefix = "eval" if task == data_args.task_name else "eval_mm"
+            metrics = trainer.evaluate(eval_dataset=eval_dataset, metric_key_prefix=prefix)
 
             max_eval_samples = (
                 data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
             )
-            metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
+            metrics[f"{prefix}_samples"] = min(max_eval_samples, len(eval_dataset))
 
-            trainer.log_metrics("eval", metrics)
-            trainer.save_metrics("eval", metrics)
+            trainer.log_metrics(prefix, metrics)
+            trainer.save_metrics(prefix, metrics)
 
     if training_args.do_predict:
         logger.info("*** Predict ***")

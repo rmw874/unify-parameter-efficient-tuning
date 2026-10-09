@@ -161,3 +161,6 @@ tags
 
 # .lock
 *.lock
+# training outputs and HF caches
+checkpoints/
+.uv-python/
