@@ -1,0 +1,9 @@
+# Exact recorded non-PyTorch versions for Linux / Python 3.9.25.
+# Install torch==2.7.0 from the cu128 wheel index separately.
+# Use the modified Transformers source provided by this repository (not PyPI).
+numpy==1.23.5
+datasets==1.11.0
+tokenizers==0.10.3
+huggingface-hub==0.0.12
+pyarrow==10.0.1
+fsspec==2022.11.0
